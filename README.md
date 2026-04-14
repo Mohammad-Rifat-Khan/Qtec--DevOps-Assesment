@@ -67,658 +67,231 @@ This submission demonstrates proficiency across all required areas:
 
 ## System Architecture
 
-This project supports three deployment targets with identical microservice code:
+The Qtec API is deployed across three deployment targets with identical application code, demonstrating container portability across different infrastructure environments.
 
-### Architecture Comparison
+### Production Architecture (AWS EC2 + Kubernetes)
 
-```
-LOCAL (Docker Compose):
-  Client:8080 → Nginx → FastAPI:8000 → Docker Logs → terminal
+![Architecture Diagram](docs/WhatsApp%20Image%202026-04-14%20at%203.22.11%20PM.jpeg)
 
-AWS EC2 (Production):
-  Client:80/443 → Nginx → FastAPI:8000 → CloudWatch Logs/Metrics
-                                    ↓
-                          Auto-starting on reboot
-                          Health monitored
-                          Zero-downtime updates
+**Current Production Setup:**
+- AWS EC2 Instance (51.20.223.223) with 50GB EBS storage
+- Minikube + Kubernetes cluster running on EC2
+- Nginx Ingress Controller (Port 80/443 → 8080 external, routing to 8000 internal)
+- Multiple Kubernetes pods with Nginx + FastAPI containers
+- Prometheus metrics collection (scrapes `/metrics` endpoint)
+- Grafana dashboards for real-time visualization
+- GitHub Actions CI/CD pipeline for automated deployments
 
-KUBERNETES (Development/Scaling):
-  Ingress → Service (ClusterIP) → [Pod1] [Pod2] [Pod3]
-                                     ↓
-                              HPA Auto-scaling
-                              Rolling updates
-                              Multi-node
-```
-
-### Container Architecture
+### Deployment Traffic Flow
 
 ```
-Each deployment target runs identical containers:
-
-┌─────────────────────────────────────────────────────────┐
-│                   Nginx Container                       │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │ Port: 80/443 (external)                        │  │
-│  │ Reverse Proxy Configuration                    │  │
-│  │ • Header forwarding (X-Real-IP, etc)          │  │
-│  │ • Request buffering & timeout management      │  │
-│  │ • 12MB lightweight image (Alpine)              │  │
-│  └─────────────────────────────────────────────────┘  │
-│           ↓ internal routing :8000                    │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                 FastAPI Container                       │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │ Port: 8000 (internal)                          │  │
-│  │ 5 REST Endpoints                               │  │
-│  │ • /health - Liveness probe                     │  │
-│  │ • /ready - Readiness probe                     │  │
-│  │ • /status - Service status                     │  │
-│  │ • /data - Data submission (POST)               │  │
-│  │ • /metrics - Prometheus metrics                │  │
-│  │ 175MB optimized image (Python 3.11-slim)      │  │
-│  │ Non-root user (appuser), security hardened    │  │
-│  │ JSON structured logging                        │  │
-│  │ 100% type hints, async/await                   │  │
-│  │ Graceful shutdown & connection draining        │  │
-│  └─────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+Internet Users
+       ↓
+AWS EC2 (51.20.223.223) Port 8080
+       ↓
+Kubernetes Ingress Controller (Nginx)
+       ↓
+Load Balancing across Pods
+       ↓
+Pod Containers (Nginx + FastAPI)
+       ↓
+FastAPI Application (Port 8000)
+       ↓
+Monitoring: Prometheus ← /metrics endpoint
+            Grafana ← visualizes metrics
 ```
+
+### Container Components
+
+**Nginx Reverse Proxy:**
+- Reverse proxy with header forwarding (X-Real-IP, X-Forwarded-Proto)
+- Request buffering and timeout management
+- Handles connection pooling from ingress controller
+- Runs as foreground process for Docker/Kubernetes compatibility
+
+**FastAPI Application:**
+- 5 REST endpoints with proper HTTP status codes
+- Liveness and readiness probes for orchestrator health checks
+- Prometheus-compatible metrics collection
+- Structured JSON logging for all requests
+- 100% type hints with async/await for concurrency
+- Graceful shutdown with connection draining
 
 ---
 
 ## Containerization Approach
 
-### Multi-Stage Docker Build
+### Multi-Stage Docker Build Strategy
 
-Both Dockerfiles use production-grade multi-stage builds:
+Both container images use production-grade multi-stage builds that separate build artifacts from runtime:
 
-**FastAPI Dockerfile (`docker/Dockerfile`)**
-```dockerfile
-# Stage 1: Builder (dependencies)
-FROM python:3.11-slim as builder
-  - Install dependencies from pyproject.toml
-  - Run security scanning (pip audit)
-  - Prepare compiled artifacts
+**FastAPI Container (`docker/Dockerfile`):**
+- Builder stage: Installs all Python dependencies and runs security scanning
+- Runtime stage: Copies only runtime artifacts, excludes build tools
+- Result: 175MB optimized image with non-root user and security hardening
 
-# Stage 2: Runtime (production)
-FROM python:3.11-slim as runtime
-  - Copy only artifacts from builder (no build tools)
-  - Create non-root user (appuser)
-  - Set working directory and permissions
-  - Expose port 8000
-  - Healthcheck configuration
-```
+**Nginx Container (`nginx/Dockerfile`):**
+- Lightweight Alpine base image (12MB)
+- Custom configuration for reverse proxy behavior
+- Optimized for port mapping and connection handling
 
-**Benefits:**
-- ✅ **Minimal size:** 175MB total (no build tools in production)
-- ✅ **Security:** Non-root user, reduced attack surface
-- ✅ **Reproducibility:** Same hash across all deployments
-- ✅ **Isolation:** Build secrets never reach runtime image
+**Build Benefits:**
+- Minimal image size (no build tools in production)
+- Enhanced security (reduced attack surface)
+- Reproducible builds across all deployments
+- Consistent image hashing for immutability
 
-**Nginx Dockerfile (`nginx/Dockerfile`)**
-```dockerfile
-FROM nginx:alpine  # Only 12MB
-  - Copy custom nginx.conf
-  - Expose port 80
-  - Run as foreground process (Docker compatible)
-```
+### Multi-Deployment Container Strategy
 
-### Why Docker for All Deployments?
+The same application code and containers work across all deployment targets:
 
-| Feature | Benefit | Use Case |
-|---------|---------|----------|
-| **Identical Environment** | Code runs same locally & production | Dev ↔ Prod parity |
-| **Stateless Design** | Easy horizontal scaling | Multi-instance |
-| **Fast Rollback** | Pull previous image version | Quick recovery |
-| **Resource Isolation** | Controlled memory/CPU limits | Multi-tenant safe |
-| **Dependency Management** | No system package conflicts | Clean deployments |
+| Environment | Container Runtime | Orchestration | Scaling |
+|------------|------------------|---------------|---------|
+| **Local** | Docker Compose | docker-compose | Manual |
+| **AWS EC2** | Docker on Ubuntu | Systemd service | Manual restart |
+| **Kubernetes** | Container runtime (containerd) | Kubernetes + Minikube | HPA auto-scaling |
+
+This approach eliminates "works on my machine" problems and ensures production parity from development through deployment.
 
 ---
 
 ## Deployment Targets
 
-### Local (Docker Compose)
+### Local Development (Docker Compose)
 
-**Purpose:** Development, testing, CI/CD validation
+**Purpose:** Development, testing, and local validation
 
-```bash
-# Single command to start complete stack
-docker compose up -d
+**Setup:**
+Docker Compose orchestrates both Nginx and FastAPI containers on a shared network with automatic health checking and service dependency management. Services expose ports for local testing and logging capability for debugging.
 
-# Services instantly available:
-# - FastAPI on localhost:8000 (internal)
-# - Nginx on localhost:8080 (public)
-# - Both on same Docker network (qtec-network)
-
-# Test immediately
-curl http://localhost:8080/health
-curl http://localhost:8080/status
-
-# View logs
-docker compose logs -f api
-
-# Cleanup
-docker compose down
-```
-
-**Capabilities:**
-- Service dependency management (`depends_on: condition: service_healthy`)
-- Health checks for both services
-- JSON logging with rotation (10m max per file)
+**Features:**
+- Integrated service dependency orchestration
+- Health checks for both containers
+- JSON structured logging with log rotation
 - Auto-restart on failure
-- Environment variable injection
+- Environment variable configuration injection
+
+**Local Service Endpoints:**
+- Nginx: http://localhost:8080 (public)
+- FastAPI: http://localhost:8000 (internal)
 
 ---
 
-### AWS EC2 (Single Instance)
+### AWS EC2 (Production Deployment)
 
-**Purpose:** Production deployment, ~100 req/sec stable workload
+**Status:** 🟢 **LIVE** - IP: 51.20.223.223:8080
 
-#### Prerequisites
+**Infrastructure Specifications:**
+- Instance Type: t3.medium (2 vCPU, 4GB RAM)
+- Operating System: Ubuntu 22.04 LTS
+- Storage: 50GB EBS gp3
+- Network: Public IP with security group (SSH:22, HTTP:80, HTTPS:443)
 
-```
-EC2 Instance Recommendation:
-  Type: t3.medium (2 vCPU, 4GB RAM) or larger
-  AMI: Ubuntu 22.04 LTS or Amazon Linux 2
-  Security Group: Allow 22 (SSH), 80 (HTTP), 443 (HTTPS)
-  Storage: 30GB EBS gp3
-  IAM Role: CloudWatch Logs + CloudWatch Metrics permissions
+**Deployment Architecture:**
+Minikube and Kubernetes run as containerized workloads on the EC2 instance, providing enterprise-grade orchestration for production traffic. The Kubernetes Ingress Controller (Nginx) handles incoming HTTP/HTTPS traffic and distributes it across multiple pods.
 
-Capacity:
-  - Handles ~100 req/sec (500 req/sec per container, 1 container = 5x headroom)
-  - CPU: <0.5% at 100 req/sec
-  - Memory: <641MB (128MB Nginx + 512MB FastAPI)
-  - Can handle spikes to 300 req/sec before throttling
-```
+**Performance Capacity:**
+- Sustained throughput: ~100 req/sec with <0.5% CPU utilization
+- Peak handling: 300 req/sec before resource throttling
+- Memory footprint: 641MB total (Nginx: 128MB, FastAPI: 512MB per pod)
+- Per-container throughput: 500 req/sec
+- Latency: 39ms average, 81ms p99
 
-#### Step-by-Step Deployment
+**Deployment Process:**
+1. Clone repository and configure environment variables
+2. Build Docker images for Nginx and FastAPI
+3. Deploy Kubernetes manifests to Minikube cluster
+4. Configure GitHub Actions for CI/CD automation
+5. Enable automatic pod restart on code changes via SSH deployment trigger
 
-**Step 1: Connect to EC2**
-```bash
-ssh -i your-key.pem ubuntu@your-ec2-ip
-```
+**Auto-Recovery & Service Management:**
 
-**Step 2: Install Docker & Docker Compose**
-```bash
-sudo apt-get update
-sudo apt-get install -y docker.io docker-compose git curl
-sudo usermod -aG docker $USER
-# Logout and login for group membership to take effect
-```
+Systemd service configuration ensures the API remains running through automatic restarts and pod orchestration. Kubernetes handles pod lifecycle management, scaling, and self-healing.
 
-**Step 3: Clone Repository**
-```bash
-git clone https://github.com/Mohammad-Rifat-Khan/Qtec--DevOps-Assesment.git
-cd Qtec--DevOps-Assesment
-```
 
-**Step 4: Configure Environment**
-```bash
-cp .env.example .env
-# Edit for production
-nano .env
-# Set: ENVIRONMENT=production, LOG_LEVEL=INFO, etc.
-```
-
-**Step 5: Build & Start Services**
-```bash
-# Build locally (or pull from registry)
-docker compose build
-
-# Start in background
-docker compose up -d
-
-# Verify services
-docker compose ps
-
-# Check logs
-docker compose logs -f api
-```
-
-**Step 6: Verify Deployment**
-```bash
-# Test all endpoints
-curl http://localhost:8080/health      # Should return 200
-curl http://localhost:8080/status      # Should return status object
-curl http://localhost:8080/metrics     # Should return metrics
-
-# Check from outside EC2 (replace with your IP)
-curl http://YOUR-EC2-IP:80/health
-```
-
-**Step 7: Enable Auto-Start on Reboot**
-```bash
-# Create systemd service
-sudo tee /etc/systemd/system/qtec-api.service > /dev/null << EOF
-[Unit]
-Description=Qtec API - Docker Compose Service
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=forking
-User=ubuntu
-WorkingDirectory=/home/ubuntu/Qtec--DevOps-Assesment
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable and start
-sudo systemctl daemon-reload
-sudo systemctl enable qtec-api.service
-sudo systemctl start qtec-api.service
-
-# Verify
-sudo systemctl status qtec-api.service
-```
-
-**Step 8: AWS CloudWatch Integration (Optional)**
-```bash
-# Install CloudWatch Agent
-wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
-sudo dpkg -i amazon-cloudwatch-agent.deb
-
-# Configure & start
-sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-  -a fetch-config \
-  -m ec2 \
-  -s
-
-# Logs now appear in CloudWatch automatically
-```
-
-#### AWS EC2 Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│              AWS EC2 Instance (t3.medium)               │
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │        Docker Engine (Container Runtime)         │ │
-│  │                                                  │ │
-│  │  ┌──────────────────┐ ┌──────────────────────┐ │ │
-│  │  │ Nginx Container  │ │ FastAPI Container   │ │ │
-│  │  ├─ :80/443        ├─│ :8000 (internal)    │ │ │
-│  │  ├─ 128MB RAM      │ ├─ 512MB RAM          │ │ │
-│  │  ├─ Reverse Proxy  │ ├─ 5 Endpoints        │ │ │
-│  │  ├─ SSL/TLS ready  │ ├─ JSON Logging       │ │ │
-│  │  └──────────────────┘ └──────────────────────┘ │ │
-│  │           ↓                ↓                    │ │
-│  │      JSON logs        JSON logs                 │ │
-│  │      rotating          structured              │ │
-│  └────────────────────────────────────────────────────┘ │
-│           ↓                                              │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │     AWS CloudWatch (Logs & Metrics)              │ │
-│  ├────────────────────────────────────────────────────┤ │
-│  │ • Logs in /aws/ec2/qtec-api                      │ │
-│  │ • Metrics: CPU, Memory, Network, ErrorCount      │ │
-│  │ • Alarms: Trigger on high CPU, failed health     │ │
-│  │ • Dashboards: Real-time monitoring               │ │
-│  └────────────────────────────────────────────────────┘ │
-│                                                          │
-│  Systemd Service: Keeps containers running on reboot    │
-│  Security Group: Only 22 (SSH), 80 (HTTP), 443 (HTTPS) │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
-         ↑
-    External Traffic
-    AWS Security Group Firewall
-```
-
----
-
-### Kubernetes (Minikube)
-
-**Purpose:** Development validation, scaling testing, multi-pod setup
-
-```bash
-# Start cluster
-minikube start --cpus=4 --memory=4096 --driver docker
-minikube addons enable metrics-server
-
-# Deploy complete system
-kubectl apply -f k8s/
-
-# Verify
-kubectl get pods -n qtec-api
-kubectl get hpa -n qtec-api
-
-# Access service
-kubectl port-forward -n qtec-api svc/api-service 8000:80
-
-# Test
-curl http://localhost:8000/health
-```
 
 ---
 
 ## Zero-Downtime Deployment
 
-### Strategy: Blue-Green Deployment
+### Deployment Strategy
 
-**For Local & AWS EC2 (Docker Compose):**
+**Rolling Updates with Kubernetes:**
 
-Step-by-step process to update code without downtime:
+Minikube Kubernetes uses rolling deployment updates that maintain service availability throughout the entire update process. Instead of stopping all pods and starting new ones, pods are replaced incrementally:
 
-```bash
-# Scenario: Update API from v1.0 to v2.0
+1. New pod with updated image starts alongside old pods
+2. Health checks verify new pod is ready to serve traffic
+3. Kubernetes router gradually shifts traffic to new pod
+4. Old pod drains remaining connections (30-second timeout)
+5. Cycle repeats until all pods are updated
+6. Net result: Zero service interruption
 
-# Step 1: Build new image
-docker build -f docker/Dockerfile -t qtec-api:v2.0 .
+**Termination Graceful Period:**
 
-# Step 2: Start new container (on different port)
-docker run -d \
-  -e ENVIRONMENT=production \
-  -p 8001:8000 \
-  --name api-v2 \
-  qtec-api:v2.0
+Kubernetes waits up to 30 seconds for existing connections to complete before forcefully terminating the pod. Pre-stop hooks add additional drain time to ensure connection cleanup.
 
-# Step 3: Health check new container
-sleep 5
-curl http://localhost:8001/health  # Must return 200
+**Automatic Rollback:**
 
-# Step 4: Update Nginx configuration
-# Edit nginx/nginx.conf:
-#   upstream api_backend {
-#       server localhost:8001;  # Switch to new port
-#   }
-
-# Step 5: Reload Nginx (without downtime)
-docker exec qtec-nginx-1 nginx -s reload
-
-# Step 6: Graceful drain of old container (30 second timeout)
-sleep 30
-
-# Step 7: Stop & remove old container
-docker stop qtec-api-1
-docker rm qtec-api-1
-
-# Result: ZERO DOWNTIME deployment complete
-```
-
-**Automatic Rollback on Failure:**
-```bash
-# If new version's health check fails:
-if ! curl -f http://localhost:8001/health; then
-    # Revert Nginx to old port
-    # Restart old container
-    # No traffic served to broken version
-fi
-```
-
-### Strategy: Rolling Updates (Kubernetes)
-
-**For Kubernetes deployments:**
-
-```yaml
-# k8s/deployment.yaml configuration
-spec:
-  replicas: 3
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0    # Always keep pods running
-      maxSurge: 1          # Add 1 new pod at a time
-  template:
-    spec:
-      terminationGracePeriodSeconds: 30  # Drain timeout
-      preStop:
-        exec:
-          command: ["sleep", "15"]       # Delay before SIGTERM
-```
-
-**Update Process:**
-```
-Initial: [Pod1-v1] [Pod2-v1] [Pod3-v1] (all serving traffic)
-  ↓ kubectl set image deployment/api-deployment api=qtec:v2.0
-Step 1:  [Pod1-v1] [Pod2-v1] [Pod3-v1] [Pod4-v2] ← new pod starts
-Step 2:  [Pod1-v1] [Pod2-v1] [Pod3-v2] [Pod4-v2] ← rolling terminates old
-Step 3:  [Pod1-v2] [Pod2-v2] [Pod3-v2] [Pod4-v2] ← rolling continues
-Step 4:  [Pod1-v2] [Pod2-v2] [Pod3-v2] ← cleanup old pod
-Final:   [Pod1-v2] [Pod2-v2] [Pod3-v2] ✓ ZERO DOWNTIME
-
-Key: maxUnavailable=0 ensures service always available
-     maxSurge=1 ensures gradual transition
-     preStop hook drains connections
-```
-
----
-
+If a new pod fails health checks, Kubernetes automatically removes it and continues serving traffic from working pods. Broken deployments never reach production traffic.
 ## Logging & Monitoring
 
 ### Structured JSON Logging
 
-Every request produces structured, machine-parseable JSON:
+Every request generates structured JSON logs with complete context: timestamp, request ID, method, path, status code, response time, and client IP. This structure enables machine parsing, log aggregation, and comprehensive audit trails.
 
-```json
-{
-  "timestamp": "2024-04-14T10:23:45.123Z",
-  "request_id": "abc-123-def-456",
-  "level": "INFO",
-  "method": "GET",
-  "path": "/status",
-  "status_code": 200,
-  "response_time_ms": 12,
-  "client_ip": "192.168.1.100",
-  "user_agent": "curl/7.68.0"
-}
-```
+**Request Tracking:**
+- Unique request ID assigned to each request
+- ID propagates through entire service call chain
+- Enables correlation across distributed systems
+- Facilitates troubleshooting and root cause analysis
 
-**Request ID Tracking:**
-- Every request gets unique ID
-- Propagates through entire call chain
-- Enables distributed tracing
-- Correlate logs across services
+### Metrics and Monitoring
 
-### Local Logging
-
-```bash
-# View FastAPI logs in real-time
-docker compose logs -f api
-
-# View Nginx logs
-docker compose logs -f nginx
-
-# Search for specific patterns
-docker compose logs api | grep ERROR
-
-# Last 100 lines
-docker compose logs --tail=100 api
-
-# Follow with timestamps
-docker compose logs -f --timestamps api
-```
-
-### AWS EC2 CloudWatch Logs
-
-**Automatic Collection:**
-```bash
-# All container logs automatically sent to CloudWatch
-# Location: CloudWatch → Logs → /aws/ec2/qtec-api
-
-# Query logs via AWS CLI
-aws logs filter-log-events \
-  --log-group-name /aws/ec2/qtec-api \
-  --filter-pattern "ERROR" \
-  --start-time $(date -d '1 hour ago' +%s)000
-
-# Create metric from logs (count errors)
-aws logs put-metric-filter \
-  --log-group-name /aws/ec2/qtec-api \
-  --filter-name ErrorCount \
-  --filter-pattern "ERROR" \
-  --metric-transformations \
-    metricName=ErrorCount,metricValue=1
-
-# Create alarm on error count
-aws cloudwatch put-metric-alarm \
-  --alarm-name qtec-api-errors \
-  --alarm-description "Alert on API errors" \
-  --metric-name ErrorCount \
-  --namespace /aws/ec2/qtec-api \
-  --statistic Sum \
-  --period 60 \
-  --threshold 10 \
-  --comparison-operator GreaterThanThreshold
-```
-
-### Metrics Endpoint
+**Prometheus Integration:**
+Prometheus scrapes the `/metrics` endpoint at regular intervals to collect real-time performance metrics. All metrics are stored in time-series format for historical analysis, trending, and alerting.
 
 **Available Metrics:**
-```bash
-curl http://localhost:8080/metrics
+- Request count (total and by endpoint)
+- Data storage count (application-specific)
+- Service uptime
+- Response time distribution
+- Container resource utilization (CPU, memory)
+- Kubernetes pod scaling metrics
 
-# Response (JSON format):
-{
-  "request_count": 1250,           # Total requests served
-  "stored_data_count": 45,         # Data items processed
-  "uptime_seconds": 3600,          # Service uptime
-  "environment": "production",     # Deployment environment
-  "version": "1.0.0",              # API version
-  "timestamp": "2024-04-14T10:23:45Z"
-}
-```
+**Grafana Dashboards:**
+Pre-configured Grafana dashboards visualize metrics in real-time with graphs, gauges, and stat panels. Dashboards display request throughput, service uptime, data count, and resource metrics for immediate visibility into system health.
 
-**Prometheus Format (Optional):**
-```bash
-curl -H "Accept: text/plain" http://localhost:8080/metrics
-
-# TYPE qtec_api_requests_total counter
-qtec_api_requests_total 1250
-
-# TYPE qtec_api_stored_data_count gauge
-qtec_api_stored_data_count 45
-
-# TYPE qtec_api_uptime_seconds gauge
-qtec_api_uptime_seconds 3600
-```
-
-### Grafana Dashboard (Optional)
-
-```bash
-# Deploy Grafana alongside API
-docker run -d \
-  -p 3000:3000 \
-  --name grafana \
-  --network qtec-network \
-  grafana/grafana:latest
-
-# Access: http://your-ec2-ip:3000
-# Default credentials: admin/admin
-
-# Add Prometheus data source (http://api:8000/metrics)
-# Create dashboard with panels:
-#  - Request Count (gauge)
-#  - Uptime (stat)
-#  - Data Count (gauge)
-#  - Response Time (graph)
-```
-
----
+**Accessing Monitoring:**
+- [Grafana Dashboards](http://51.20.223.223:3000) - Real-time metrics visualization (Default: admin/admin123)
+- Prometheus queries: Available via Kubernetes service endpoint
+- [Metrics Endpoint](http://51.20.223.223:8080/metrics) - Prometheus-compatible metrics
 
 ## Performance & Scaling
 
-### Benchmarked Capacity
+### Capacity Overview
 
-```
-Single Container Performance (FastAPI alone):
-  Throughput: 500-1000 req/sec
-  Latency: 39ms average, 81ms P99
-  Memory: 41MB
-  CPU: <0.5% at 100 req/sec
-  Success Rate: 100%
-```
+**Single Container Performance:**
+- Throughput: 500-1000 req/sec
+- Latency: 39ms average, 81ms p99
+- Memory per pod: 41MB
+- CPU utilization at 100 req/sec: <0.5%
 
-### Load Profile for 100 req/sec
+### Scaling Strategy
 
-**Option 1: Single AWS EC2 t3.medium**
-```
-Resources:
-  Nginx: 0.5 vCPU, 128MB RAM
-  FastAPI: 1.5 vCPU, 512MB RAM
-  Total: 2 vCPU, 640MB RAM
+**Horizontal Scaling (Multiple Pods):**
+Kubernetes Horizontal Pod Autoscaler monitors CPU and memory metrics. When CPU utilization exceeds 70%, new pods are automatically provisioned and added to the load balancer. This approach scales the service for high-traffic scenarios.
 
-Capacity:
-  100 req/sec: 20% CPU utilization → 80% headroom
-  300 req/sec: 60% CPU utilization → 40% headroom
-  500 req/sec: 100% CPU utilization → bottleneck
-
-Recommendation:
-  ✓ Use t3.medium for consistent ~100 req/sec
-  ✓ Handles burst spikes to 300 req/sec
-  ✗ Upgrade to t3.large for >200 req/sec sustained
-```
-
-**Option 2: Multiple EC2 Instances with AWS ELB**
-```
-Architecture:
-  AWS Elastic Load Balancer (ELB)
-    ├─ EC2-1 (t3.medium): 100 req/sec
-    ├─ EC2-2 (t3.medium): 100 req/sec
-    └─ EC2-3 (t3.medium): 100 req/sec
-
-Total Capacity: 300 req/sec
-High Availability: Any instance can fail, service continues
-Auto-Scaling: Add/remove instances based on CPU
-```
-
-**Option 3: Kubernetes on EKS (Large Scale)**
-```
-Kubernetes Auto-Scaling:
-  Min Pods: 2
-  Max Pods: 10
-  Scale Up: CPU > 70%
-  Scale Down: CPU < 30% (conservative)
-
-Capacity:
-  2 pods:  1000 req/sec
-  5 pods:  2500 req/sec
-  10 pods: 5000+ req/sec
-
-Best For: Highly variable traffic, cost optimization
-```
-
-### Capacity Planning Table
-
-| Requests/sec | Deployment | Instance Type | Containers | Status |
-|--------------|------------|---------------|------------|--------|
+**Vertical Scaling (Larger Instance):**
+For sustained traffic above 200 req/sec, upgrade the EC2 instance type to t3.large or larger to increase resource allocation without changing application code.
 | 50 | AWS EC2 | t3.small | 1 | OK |
 | 100 | AWS EC2 | t3.medium | 1 | OK |
 | 200 | AWS EC2 | t3.large | 1 | OK |
 | 300 | AWS ELB | 3×t3.medium | 3 | OK |
 | 500 | AWS ELB | 4×t3.large | 4 | OK |
-| 1000+ | EKS | auto-scaling | 5-10 | OK |
+### Resource Allocation
 
-### Resource Monitoring
-
-```bash
-# AWS EC2: Monitor resource usage
-docker stats
-
-# Output:
-CONTAINER        CPU %    MEM USAGE / LIMIT
-qtec-api-1       0.22%    41MB / 4GB
-qtec-nginx-1     0.05%    12MB / 4GB
-
-# CloudWatch: Monitor from AWS dashboard
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/EC2 \
-  --metric-name CPUUtilization \
-  --dimensions Name=InstanceId,Value=i-1234567890abcdef0 \
-  --start-time 2024-04-14T09:00:00Z \
-  --end-time 2024-04-14T10:00:00Z \
-  --period 300 \
-  --statistics Average,Maximum
-```
+Kubern etes automatically manages resource allocation across pods. Resource requests and limits are configured in deployment manifests to ensure fair distribution and prevent single pods from consuming all cluster resources.
 
 ---
 
@@ -739,317 +312,77 @@ aws cloudwatch get-metric-statistics \
 | **Zero-Downtime Deploy** | Rolling updates | [OK] maxUnavailable=0 |
 | **Auto-Scaling** | HPA 2-10 replicas | [OK] CPU/Memory driven |
 
+---
+
 ## Quick Start
 
-### Quick Start (Choose Your Deployment)
+**Live Production API:**  http://51.20.223.223:8080/docs
 
-**For Local Development:**
-```bash
-docker compose up -d
-curl http://localhost:8080/health
-docker compose down
-```
+The API is actively deployed and running on AWS EC2. Access the interactive FastAPI Swagger documentation to test endpoints and view complete API specifications.
 
-**For AWS EC2 Production:**
-```bash
-ssh -i your-key.pem ubuntu@your-ec2-ip
-sudo apt-get install -y docker.io docker-compose
-git clone https://github.com/YOUR-REPO/Qtec--DevOps-Assesment.git
-cd Qtec--DevOps-Assesment
-docker compose up -d
-curl http://localhost:80/health
-```
-
-**For Kubernetes:**
-```bash
-minikube start --cpus=4 --memory=4096
-kubectl apply -f k8s/
-kubectl port-forward -n qtec-api svc/api-service 8000:80
-curl http://localhost:8000/health
-```
-
-See relevant sections above for detailed deployment guides.
+**Common Testing:**
+- Health check: http://51.20.223.223:8080/health
+- Service status: http://51.20.223.223:8080/status
+- Metrics: http://51.20.223.223:8080/metrics
+- API documentation: http://51.20.223.223:8080/docs
+- Grafana Dashboard: http://51.20.223.223:3000 (admin/admin)
 
 ---
 
 ## API Specification
 
-### Request/Response Flow
-
-```
-┌────────────────┐
-│  Client        │
-└────────┬───────┘
-         │ HTTP Request
-         ▼
-┌─────────────────────────────────────┐
-│   Nginx Reverse Proxy               │
-│  ┌───────────────────────────────┐  │
-│  │ • SSL/TLS Termination         │  │
-│  │ • Request Buffering           │  │
-│  │ • Header Validation           │  │
-│  └────────┬──────────────────────┘  │
-└──────────┼──────────────────────────┘
-           │ Forwarded Request
-           ▼
-┌─────────────────────────────────────────────────────┐
-│   FastAPI Application (Async)                       │
-│  ┌──────────────────────────────────────────────┐  │
-│  │ Request Logging Middleware                   │  │
-│  │ • Unique request_id tracking                 │  │
-│  │ • Client IP, method, path logged             │  │
-│  └──────────────┬───────────────────────────────┘  │
-│  ┌──────────────▼───────────────────────────────┐  │
-│  │ Route Handler (Type-checked)                 │  │
-│  │ • Pydantic validation                        │  │
-│  │ • Business logic                             │  │
-│  │ • Structured response                        │  │
-│  └──────────────┬───────────────────────────────┘  │
-│  ┌──────────────▼───────────────────────────────┐  │
-│  │ Response Logging                             │  │
-│  │ • Status code, response time                 │  │
-│  │ • JSON log output                            │  │
-│  └──────────────┬───────────────────────────────┘  │
-└──────────────┼──────────────────────────────────────┘
-               │ HTTP Response
-               ▼
-        ┌─────────────┐
-        │  Client     │
-        └─────────────┘
-```
-
-### Endpoints
+### REST Endpoints
 
 | Method | Path | Purpose | Status |
 |--------|------|---------|--------|
-| **GET** | `/health` | Liveness probe (restart if fails) | [OK] 200 OK |
-| **GET** | `/ready` | Readiness probe (remove from LB if fails) | [OK] 200 OK |
-| **GET** | `/status` | Service status, uptime, request count | [OK] 200 OK |
-| **POST** | `/data` | Submit data for processing | [OK] 202 Accepted |
-| **GET** | `/metrics` | Prometheus-compatible metrics | [OK] 200 OK (JSON) |
-| **GET** | `/docs` | Swagger UI documentation | [OK] Interactive |
-| **GET** | `/redoc` | ReDoc documentation | [OK] Alternative |
+| **GET** | `/` | Root endpoint with service information | 200 |
+| **GET** | `/health` | Liveness probe for container orchestrators | 200 |
+| **GET** | `/ready` | Readiness probe for load balancers | 200 |
+| **GET** | `/status` | Service status with uptime and metrics | 200 |
+| **POST** | `/data` | Accept and process submitted data | 202 |
+| **GET** | `/metrics` | Prometheus-compatible metrics endpoint | 200 |
+| **GET** | `/docs` | Interactive Swagger UI documentation | 200 |
+| **GET** | `/redoc` | ReDoc API documentation | 200 |
 
----
+### Response Formats
 
-## Performance & Scaling
-
-### Benchmarked Performance
-
-```
-┌─────────────────────────────────────────────────┐
-│  Load Test Results (Single Container)           │
-├─────────────────────────────────────────────────┤
-│  Total Requests:     1000                       │
-│  Duration:           1 second                   │
-│  Throughput:         1000 req/sec               │
-│  Success Rate:       100% (0 failures)          │
-│  Avg Response Time:  39ms                       │
-│  P99 Latency:        81ms                       │
-│  Min Latency:        7ms                        │
-│  Memory Usage:       41MB                       │
-│  CPU Usage:          0.22%                      │
-└─────────────────────────────────────────────────┘
-```
-
-### Scaling Strategy
-
-```
-Local (Single Pod):
-  └─ Performance:   ~500 req/sec ✓
-  └─ Memory:        41MB
-  └─ Best for:      Development, testing
-
-Docker Compose (1 API + 1 Nginx):
-  └─ Performance:   ~500 req/sec ✓
-  └─ Setup:         Simple, local
-  └─ Best for:      Integration testing
-
-Kubernetes (3 Pods Min):
-  ├─ Initial Replicas:    3
-  ├─ Min Replicas (HPA):  2
-  ├─ Max Replicas (HPA):  10
-  ├─ CPU Threshold:       70% (scale up)
-  ├─ Scale-Up Speed:      Aggressive (15s)
-  ├─ Scale-Down Speed:    Conservative (300s)
-  ├─ Performance:         ~1500 req/sec (3 pods)
-  └─ Best for:           Production
-
-│ Pods │ Capacity     │ Headroom │ Cost    │
-├──────┼──────────────┼──────────┼─────────┤
-│ 2    │ 1000 req/s   │ 90%      │ Low     │
-│ 3    │ 1500 req/s   │ 93%      │ Medium  │
-│ 5    │ 2500 req/s   │ 96%      │ Medium  │
-│ 10   │ 5000 req/s   │ 98%      │ High    │
-```
+All responses are JSON-formatted. Status endpoints include key metrics (request count, uptime, data count) and deployment information (version, environment). Documentation endpoints provide interactive API exploration for testing and validation.
 
 ---
 
 ## Project Structure
 
-```
-Qtec-Task/
-├── app/                              # FastAPI Application
-│   ├── __init__.py                   # Package marker
-│   ├── main.py                       # FastAPI app
-│   ├── config.py                     # Pydantic Settings v2
-│   └── logger.py                     # Structured JSON logging
-│
-├── tests/                            # Test Suite
-│   ├── conftest.py                   # pytest fixtures
-│   └── test_api.py                   # 18 tests, 94% coverage
-│
-├── docker/                           # Container Images
-│   ├── Dockerfile                    # Multi-stage FastAPI image
-│   └── .dockerignore
-│
-├── nginx/                            # Reverse Proxy Service
-│   ├── Dockerfile                    # Nginx Alpine image
-│   ├── nginx.conf                    # Production config
-│   └── .dockerignore
-│
-├── k8s/                              # Kubernetes Manifests (Primary)
-│   ├── namespace.yaml                # Isolated namespace
-│   ├── configmap.yaml                # App configuration
-│   ├── deployment.yaml               # Deployment with rolling updates
-│   ├── service.yaml                  # Load balancing service
-│   ├── hpa.yaml                      # Auto-scaling (2-10 replicas)
-│   └── ingress.yaml                  # External access configuration
-│
-├── .github/workflows/                # CI/CD Pipeline
-│   └── ci-cd.yml                     # GitHub Actions automation
-│
-├── pyproject.toml                    # Modern Python packaging
-├── docker-compose.yml                # Local orchestration
-├── README.md                         # This file
-```
+The repository is organized for clear separation of concerns with distinct folders for application code, tests, container configurations, and Kubernetes manifests.
 
 ---
 
-## Testing & Quality
+## Testing & Quality Assurance
 
-```bash
-# Run all tests
-pytest -v
+The project includes comprehensive test coverage validating all endpoints and core functionality.
 
-# Run with coverage report
-pytest --cov=app --cov-report=html
+**Test Suite:**
+- 18 unit and integration tests covering all API endpoints
+- 94% code coverage across application modules
+- Type checking with mypy ensuring type safety
+- Code linting with ruff for consistency
+- All tests automated in GitHub Actions CI pipeline
 
-# Run specific test class
-pytest -v tests/test_api.py::TestHealthEndpoints
-
-# Type checking
-mypy app
-
-# Linting
-ruff check app tests
-
-# Format code
-ruff format app tests
-```
-
-**Status**: [OK] 18 tests passing, 94% coverage, all endpoints covered
+---
 
 ## CI/CD Pipeline
 
-# Watch pods scale up/down (HPA)
-kubectl get pods -n qtec-api -w
+**Automated Build & Deployment Process:**
 
-# Check HPA status
-kubectl describe hpa api-hpa -n qtec-api
-```
+The GitHub Actions workflow automates code validation, Docker image building, security scanning, and Kubernetes deployment on every push to the main branch.
 
-### Kubernetes Features
+**Pipeline Stages:**
 
-#### Rolling Updates (Zero-Downtime Deployment)
-```bash
-# Update image to new version
-kubectl set image deployment/api-deployment \
-  api=qtec-api:v2 \
-  -n qtec-api
+1. **Code Validation** - Run test suite, type checks, and linting
+2. **Docker Image Build** - Multi-stage build producing optimized container images
+3. **Security Scanning** - Trivy vulnerability analysis with SARIF report generation
+4. **Kubernetes Deployment** - SSH-triggered pod restart for zero-downtime updates
 
-# Monitor rollout progress
-kubectl rollout status deployment/api-deployment -n qtec-api
-
-# View rollout history
-kubectl rollout history deployment/api-deployment -n qtec-api
-
-# Rollback if needed
-kubectl rollout undo deployment/api-deployment -n qtec-api
-```
-
-**How it works:**
-- `maxUnavailable: 0` = Always keep pods running
-- `maxSurge: 1` = Add 1 new pod at a time
-- Old pods drain connections for 30 seconds
-- New pods pass readiness checks before traffic shifts
-
-#### Horizontal Pod Autoscaling
-```bash
-# HPA automatically scales 2-10 replicas based on CPU/Memory
-# Scale up: Add pods when CPU > 70%
-# Scale down: Remove pods during low traffic (conservative)
-
-# Generate load to trigger scaling
-kubectl run -it --rm load-gen --image=busybox /bin/sh
-# Inside container: while true; do wget -q -O- http://api-service; done
-
-# Watch HPA scale pods
-kubectl get hpa -n qtec-api -w
-```
-
-#### Graceful Shutdown
-- `terminationGracePeriodSeconds: 30` - Time to drain requests
-- `preStop` hook - 15 second delay before SIGTERM
-- Readiness probes ensure traffic removed before termination
-
-## Testing
-
-```bash
-# Run all tests
-pytest -v
-
-# Run with coverage report
-pytest --cov=app --cov-report=html
-
-# Run specific test class
-pytest -v tests/test_api.py::TestHealthEndpoints
-
-# Type checking
-mypy app
-
-# Linting
-ruff check app tests
-
-# Format code
-ruff format app tests
-```
-
-**Status**: [OK] 18 tests passing, 94% coverage, all endpoints covered
-
-## CI/CD Pipeline
-
-**Location**: `.github/workflows/ci-cd.yml`
-
-### Automated Workflow (On Push to main)
-
-```
-1. ✅ Test Code
-   └─ pytest (18 tests)
-   └─ Type checking (mypy)
-   └─ Linting (ruff)
-
-2. ✅ Build Docker Image
-   └─ Multi-stage build
-   └─ 175MB optimized image
-
-3. ✅ Security Scan
-   └─ Trivy vulnerability scan
-   └─ SARIF report to GitHub
-
-4. ✅ Deployment Ready
-   └─ Image ready for Kubernetes
-```
+**Result:** Code changes proceed automatically from repository commit through testing, building, security validation, and production deployment.
 
 ---
 
@@ -1069,81 +402,40 @@ ruff format app tests
 
 ---
 
-## Code Metrics
+## Troubleshooting & Operations
 
-```
-Tests:        18 / 18 passing [OK]
-Coverage:     94% (app + tests)
-Type Hints:   100% of functions
-Dependencies: 4 core packages
-Image Size:   175MB (optimized)
-Build Time:   ~5 seconds
-Warnings:     0
-Errors:       0
-```
+**Service Not Responding:**
+Verify that Kubernetes pods are in Running state. Check pod logs for errors and confirm network policies allow traffic on port 8080.
 
-## Troubleshooting
+**High Resource Utilization:**
+Monitor CPU and memory metrics via Grafana dashboards. The Horizontal Pod Autoscaler automatically provisions new pods when CPU utilization exceeds 70%.
 
-### Pods Not Starting
-```bash
-# Check pod logs
-kubectl logs -n qtec-api <pod-name>
+**Deployment Issues:**
+Review GitHub Actions logs for build or deployment failures. Verify container registry access and Kubernetes RBAC permissions.
 
-# Check pod events
-kubectl describe pod -n qtec-api <pod-name>
+**Monitoring Issues:**
+Confirm Prometheus scrape targets are UP. Verify the `/metrics` endpoint is accessible from monitoring pods and network policies permit metric collection traffic.
 
-# Verify namespace exists
-kubectl get namespace qtec-api
-```
+---
 
-### HPA Not Scaling
-```bash
-# Verify metrics-server is running
-kubectl get deployment -n kube-system metrics-server
+## Production Deployment
 
-# Check HPA status
-kubectl describe hpa api-hpa -n qtec-api
-```
+**AWS EC2 Instance Details:**
+- IP Address: 51.20.223.223
+- Instance Type: t3.medium (2 vCPU, 4GB RAM)
+- Storage: 50GB EBS gp3
+- Kubernetes Runtime: Minikube
+- Access Port: 8080
 
-### Cannot Access Service
-```bash
-# Verify service exists
-kubectl get svc -n qtec-api
+**Service Endpoints:**
+- Documentation: http://51.20.223.223:8080/docs
+- Health Check: http://51.20.223.223:8080/health
+- Metrics: http://51.20.223.223:8080/metrics
 
-# Test from within cluster
-kubectl run -it --rm test --image=busybox /bin/sh
-# Inside pod: wget http://api-service
-```
-
-## Cleanup
-
-### Docker Compose
-```bash
-docker compose down
-```
-
-### Kubernetes
-```bash
-kubectl delete namespace qtec-api
-```
-
-### Minikube
-```bash
-minikube stop
-minikube delete
-```
-
-## Core Tasks Completion Status
-
-| Task | Status | Details |
-|------|--------|---------|
-| 1. Simple API | [OK] | 5 endpoints (GET/POST), proper status codes |
-| 2. Containerize | [OK] | Multi-stage Docker (175MB), non-root user |
-| 3. Reverse Proxy | [OK] | Nginx reverse proxy, docker-compose |
-| 4. CI/CD Pipeline | [OK] | GitHub Actions, auto test/build/scan |
-| 5. Monitoring & Logs | [OK] | JSON logging, Prometheus metrics |
-| 6. Cloud Deployment | [OK] | Kubernetes manifests, HPA, rolling updates |
-
+**Monitoring Stack:**
+- [Grafana Dashboard](http://51.20.223.223:3000) - Real-time metrics visualization (Default credentials: admin/admin)
+- Prometheus data source configured and pre-configured dashboards for monitoring pod metrics, request throughput, uptime, and resource utilization
+- Provides real-time visibility into service performance and system health
 ## License
 
 MIT
