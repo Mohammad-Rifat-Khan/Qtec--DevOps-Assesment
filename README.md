@@ -1,11 +1,12 @@
-# Qtec API - Production-Grade FastAPI Service
+# Qtec API - DevOps Assessment (Qtec Solutions)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-latest-blue.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Enterprise-ready microservice architecture** with complete container orchestration, automated CI/CD, and production-grade monitoring. All 6 core tasks completed and benchmarked.
+> **DevOps Assessment Submission** - Qtec Solutions DevOps Position  
+> Enterprise-ready microservice architecture with complete container orchestration, automated CI/CD, and production-grade monitoring. All 6 core tasks completed and benchmarked.
 
 ---
 
@@ -32,7 +33,20 @@
 
 ## Overview
 
-**Qtec API** is a production-grade FastAPI microservice designed for high-performance, scalable cloud deployments. Built with industry best practices for reliability, observability, and security.
+**Qtec API** is a production-grade FastAPI microservice submitted as a DevOps assessment for Qtec Solutions. This project demonstrates mastery of containerization, Kubernetes orchestration, CI/CD automation, and observability—delivering a complete, deployment-ready system with enterprise best practices for reliability, observability, and security.
+
+### Assessment Coverage
+
+This submission demonstrates proficiency across all required areas:
+
+| Competency | Implementation | Status |
+|------------|-----------------|--------|
+| **Simple API Service** | 5 REST endpoints with proper status codes | [OK] Complete |
+| **Containerization** | Multi-stage Docker builds, non-root user, optimized images | [OK] Complete |
+| **Reverse Proxy Setup** | Nginx proxy, docker-compose orchestration | [OK] Complete |
+| **CI/CD Pipeline** | GitHub Actions automation (test→build→security scan) | [OK] Complete |
+| **Monitoring & Logging** | Structured JSON logging, Prometheus metrics, Grafana dashboard | [OK] Complete |
+| **Cloud Deployment** | Kubernetes manifests, HPA, rolling updates, resource limits | [OK] Complete |
 
 ### Key Statistics
 
