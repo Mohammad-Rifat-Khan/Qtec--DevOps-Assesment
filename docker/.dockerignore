@@ -1,0 +1,23 @@
+# Files to exclude from Docker build context
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+.git
+.gitignore
+.dockerignore
+*.md
+.pytest_cache
+.coverage
+.env
+.DS_Store
+kubernetes/
+k8s/
+.github/
+monitoring/
+aws/
+tests/

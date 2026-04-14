@@ -1,0 +1,49 @@
+# Version control
+.git
+.gitignore
+
+# Development
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Documentation
+docs
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files (for production image)
+tests
+
+# Development files
+docker-compose.yml
+Makefile
+.dockerignore
