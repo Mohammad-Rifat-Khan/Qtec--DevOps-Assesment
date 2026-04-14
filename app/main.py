@@ -88,6 +88,19 @@ async def request_logging_middleware(request: Request, call_next):  # type: igno
 
 
 @app.get(
+    "/",
+    tags=["API"],
+)
+async def root() -> dict[str, str]:
+    return {
+        "message": "Welcome to Qtec Assesment API!",
+        "version": settings.version,
+        "environment": settings.environment,
+        "docs_url": "/docs",
+    }
+
+
+@app.get(
     "/health",
     response_model=HealthResponse,
     responses={200: {"description": "Service is healthy"}},
