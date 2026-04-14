@@ -501,7 +501,7 @@ docker compose down
 Qtec-Task/
 ├── app/                              # FastAPI Application
 │   ├── __init__.py                   # Package marker
-│   ├── main.py                       # FastAPI app (70 LOC, 100% typed)
+│   ├── main.py                       # FastAPI app
 │   ├── config.py                     # Pydantic Settings v2
 │   └── logger.py                     # Structured JSON logging
 │
@@ -529,10 +529,9 @@ Qtec-Task/
 ├── .github/workflows/                # CI/CD Pipeline
 │   └── ci-cd.yml                     # GitHub Actions automation
 │
-├── pyproject.toml                    # Modern Python packaging (PEP 517)
-├── docker-compose.yml                # Local orchestration (optional)
+├── pyproject.toml                    # Modern Python packaging
+├── docker-compose.yml                # Local orchestration
 ├── README.md                         # This file
-└── .env                              # Environment variables template
 ```
 
 ---
