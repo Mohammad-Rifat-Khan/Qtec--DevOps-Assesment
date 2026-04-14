@@ -319,7 +319,7 @@ The API is actively deployed and running on AWS EC2. Access the interactive Fast
 - Service status: http://51.20.223.223:8080/status
 - Metrics: http://51.20.223.223:8080/metrics
 - API documentation: http://51.20.223.223:8080/docs
-- Grafana Dashboard: http://51.20.223.223:3000 (admin/admin)
+- Grafana Dashboard: http://51.20.223.223:3000 (admin/admin123)
 
 ---
 
