@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):  # type: ignore
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="Production-grade API with containerization and orchestration",
+    description="API with containerization and orchestration",
     lifespan=lifespan,
 )
 
